@@ -1,5 +1,16 @@
 # What is this
-Portable is a sandbox framework targeted for Desktop usage and offers ease of use for packagers. It provides isolation to the filesystem, in addition to blocking non-portal calls, it also stops unsafe portals from being used like the location portal and screenshot portal. Portable itself is still in development and have already been applied to Minecraft, WeChat and Discord. 
+Portable is a sandbox framework targeted for Desktop usage and offers ease of use for distro packagers. It offers many useful features for users and packagers:
+
+- Background Portal support.
+- Access Control: Limits what the application can see, write and modify. Sandboxed applications are self-contained.
+- Sharing files with the application, even if it doesn't support portals. portable creates a directory within the sandbox home to contain shared files.
+- D-Bus filtering & accessibility support: Cuts off unneeded D-Bus messages thus eliminates the possibility to locate, spawn a process outside of the sandbox, mess with the host system and other possible exploits.
+- Process Management: Monitors running processes and quit them with one click.
+- Packaging Friendly as portable only requires a config file to function.
+- Storage efficient compared to Flatpak: Using host system as the "runtime".
+- Hybrid GPU workarounds are automatically applied to prevent waking up discrete GPUs, often caused by Vulkan and Electron applications.
+
+Portable itself is still in development and have already been applied to [Minecraft](https://github.com/Kimiblock/moeOS.config/blob/master/usr/bin/mcLaunch), WeChat, Wemeet, Obsidian, QQ and Discord.
 
 **Running untrusted code is never safe, sandboxing does not change this.**
 
@@ -26,6 +37,8 @@ install -Dm755 open.sh /usr/lib/portable/open
 install -Dm755 user-dirs.dirs /usr/lib/portable/user-dirs.dirs
 install -Dm755 mimeapps.list /usr/lib/portable/mimeapps.list
 install -Dm755 flatpak-info /usr/lib/portable/flatpak-info
+install -Dm755 bwrapinfo.json /usr/lib/portable/bwrapinfo.json
+install -Dm755 portable-helper.sh /usr/lib/portable/helper
 ```
 
 ## Configurations
@@ -44,6 +57,12 @@ Environment variables are read from `XDG_DATA_HOME/stateDirectory/portable.env`
 
 Start portable with environment variable `_portableConfig`, which is pointed to the actual config. It searches absolute path (if exists), `/usr/lib/portable/info/${_portableConfig}/config` and `$(pwd)/${_portableConfig}` respectively. The legacy `_portalConfig` will work for future releases.
 
+- Debugging output can be enabled using a environment variable `PORTABLE_LOGGING=debug`
+
+### Launching multiple instances
+
+Portable itself allows multiple instances. It automatically creates an identical sandbox and launches the application. Application itself may or may not support waking up itself.
+
 ## .desktop requirements
 
 The name of your .desktop file should match the appID, like `top.kimiblock.example.desktop`
@@ -60,16 +79,23 @@ X-Flatpak-RenamedFrom=previousName.desktop;
 
 `--actions f5aaebc6-0014-4d30-beba-72bce57e0650`: Toggle Sandbox, requires user confirmation.
 
-`--actions opendir`: Open the sandbox's home directory
+`--actions opendir`: Open the sandbox's home directory.
+
+`--actions share-files`: Choose multiple files to share with the sandbox. The file will be temporarily stored in `XDG_DATA_HOME/stateDirectory/Shared`, which is purged each launch.
 
 `--actions quit`: Stop sandbox and D-Bus proxy. If the app fails to stop after 20s, it'll be killed.
+
+`--actions inspect`: Enters the sandbox.
+
+`--actions debug-shell`: Start bash in the sandbox instead of the application itself.
 
 ### Debugging
 
 #### Entering sandbox
-Start portable with argument `--actions connect-tty debug-shell`
 
-Optionally enable debugging output using environment variable `PORTABLE_LOGGING=debug`
+To manually execute programs instead of following the `launchTarget` config, start portable with argument `--actions debug-shell`. This will open a bash prompt and gives you full control of the sandbox environment.
+
+If the sandbox is already running, then _debug-shell_ is not usable. Instead you may want to use `--actions inspect`. This utilizes nsenter to enter the sandbox's user, mount and other namespaces respectively. This does now exactly mimic a portable sandbox environment, but useful if you want to poke around while the app is running.
 
 # Repository mirror
 This repository is available @ [Codeberg](https://codeberg.org/Kimiblock/portable) due to AUR packaging for Chinese users.

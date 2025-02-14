@@ -50,6 +50,7 @@ fi
 
 busName="${appID}"
 busDir="${XDG_RUNTIME_DIR}/app/${busName}"
+busDirAy="${XDG_RUNTIME_DIR}/app/${busName}-a11y"
 unitName="${friendlyName}"
 proxyName="${friendlyName}-dbus"
 
@@ -69,15 +70,23 @@ function sourceXDG() {
 
 function manageDirs() {
 	createWrapIfNotExist "${XDG_DATA_HOME}"/${stateDirectory}
+	rm -r "${XDG_DATA_HOME}/${stateDirectory}/Shared"
+	mkdir -p "${XDG_DATA_HOME}/${stateDirectory}/Shared"
+	ln -sfr \
+		"${XDG_DATA_HOME}/${stateDirectory}/Shared" \
+		"${XDG_DATA_HOME}/${stateDirectory}/共享文件"
 }
 
 function genXAuth() {
-	if [[ ${waylandOnly} = "true" ]]; then
+	rm "${XDG_DATA_HOME}/${stateDirectory}/.XAuthority"
+	if [ ${waylandOnly} = "true" ]; then
+		touch "${XDG_DATA_HOME}/${stateDirectory}/.XAuthority"
+		return $?
+	elif [ ${waylandOnly} = "adaptive" ] && [ ${XDG_SESSION_TYPE} = "wayland" ]; then
 		touch "${XDG_DATA_HOME}/${stateDirectory}/.XAuthority"
 		return $?
 	fi
 	pecho debug "Processing X Server security restriction..."
-	rm "${XDG_DATA_HOME}/${stateDirectory}/.XAuthority"
 	touch "${XDG_DATA_HOME}/${stateDirectory}/.XAuthority"
 	pecho debug "Detecting display as ${DISPLAY}"
 	if [[ $(xauth list ${DISPLAY} | head -n 1) =~ "$(hostnamectl --static)/unix: " ]]; then
@@ -95,6 +104,10 @@ function genXAuth() {
 		xauth -f \
 			"${XDG_DATA_HOME}/${stateDirectory}/.XAuthority" \
 			add $(xauth list ${DISPLAY} | head -n 1)
+	fi
+	if [ ! -f "${HOME}/.XAuthority"  ] && [ -z "${XAUTHORITY}" ]; then
+		pecho warn "Could not determine XAuthority file path"
+		xhost +localhost
 	fi
 	xauth \
 		-f "${XDG_DATA_HOME}/${stateDirectory}/.XAuthority" \
@@ -135,7 +148,11 @@ function createWrapIfNotExist() {
 }
 
 function inputMethod() {
-	if [[ ${waylandOnly} = true ]]; then
+	if [ ${waylandOnly} = true ]; then
+		export QT_IM_MODULE=wayland
+		export GTK_IM_MODULE=wayland
+		IBUS_USE_PORTAL=1
+	elif [ ${waylandOnly} = "adaptive" ] && [ ${XDG_SESSION_TYPE} = "wayland" ]; then
 		export QT_IM_MODULE=wayland
 		export GTK_IM_MODULE=wayland
 		IBUS_USE_PORTAL=1
@@ -153,61 +170,134 @@ function inputMethod() {
 		export LC_CTYPE=zh_TW.UTF-8
 	else
 		pecho warn 'Input Method potentially broken! Please set $XMODIFIERS properly'
+		# Guess the true IM based on running processes
+		runningProcess=$(ps -U $(whoami))
+		if [[ ${runningProcess} =~ "ibus-daemon" ]]; then
+			pecho warn "Guessing Input Method as iBus"
+			export QT_IM_MODULE=ibus
+			export GTK_IM_MODULE=ibus
+			export XMODIFIERS=@im=ibus
+		elif [[ ${runningProcess} =~ "fcitx" ]]; then
+			pecho warn "Guessing Input Method as Fcitx"
+			export QT_IM_MODULE=fcitx
+			export GTK_IM_MODULE=fcitx
+			export XMODIFIERS=@im=fcitx
+		fi
 	fi
 }
 
 function importEnv() {
+	inputMethod
+	genXAuth
 	cat "${_portableConfig}" >"${XDG_DATA_HOME}/${stateDirectory}/portable-generated.env"
+	printf "\n\n" >>"${XDG_DATA_HOME}/${stateDirectory}/portable-generated.env"
 	printf "\n\n" >>"${XDG_DATA_HOME}/${stateDirectory}/portable-generated.env"
 	if [ -e "${XDG_DATA_HOME}"/${stateDirectory}/portable.env ]; then
 		pecho info "${XDG_DATA_HOME}/${stateDirectory}/portable.env exists"
 	else
 		touch "${XDG_DATA_HOME}"/${stateDirectory}/portable.env
 	fi
-	if [[ $(cat "${XDG_DATA_HOME}"/${stateDirectory}/portable.env) ]]; then
+	if [ -s "${XDG_DATA_HOME}"/${stateDirectory}/portable.env ]; then
 		cat "${XDG_DATA_HOME}"/${stateDirectory}/portable.env >>"${XDG_DATA_HOME}/${stateDirectory}/portable-generated.env"
-		return $?
 	else
 		echo "# Envs" >>"${XDG_DATA_HOME}"/${stateDirectory}/portable.env
 		echo "isPortableEnvPresent=1" >>"${XDG_DATA_HOME}"/${stateDirectory}/portable.env
 	fi
-	if [[ $(cat "${XDG_DATA_HOME}/${stateDirectory}/portable-generated.env") =~ QT_SCALE_FACTOR ]]; then
-		pecho info "Imported QT SCREEN SCALE FACTOR!"
-		fileName=$(uuidgen)
-		cat "${XDG_DATA_HOME}/${stateDirectory}/portable-generated.env" \
-		>/tmp/portable-${fileName}.tmp
-		source /tmp/portable-${fileName}.tmp
-		rm /tmp/portable-${fileName}.tmp
+	#PW_V4L2_LD_PRELOAD="/usr/lib/pipewire-0.3/v4l2/libpw-v4l2.so"
+	#if [ "${LD_PRELOAD}" = "" ]; then
+	#	export LD_PRELOAD="$PW_V4L2_LD_PRELOAD"
+	#else
+	#	export LD_PRELOAD="${LD_PRELOAD} ${PW_V4L2_LD_PRELOAD}"
+	#fi
+	addEnv "LD_PRELOAD=${LD_PRELOAD}"
+	addEnv 'GDK_DEBUG=portals'
+	addEnv 'GTK_USE_PORTAL=1'
+	addEnv 'QT_AUTO_SCREEN_SCALE_FACTOR=1'
+	addEnv "GTK_IM_MODULE=${GTK_IM_MODULE}"
+	addEnv "QT_IM_MODULE=${QT_IM_MODULE}"
+	addEnv "QT_ENABLE_HIGHDPI_SCALING=1"
+	addEnv "PATH=/sandbox:${PATH}"
+	addEnv "DISPLAY=${DISPLAY}"
+	addEnv "QT_SCALE_FACTOR=${QT_SCALE_FACTOR}"
+	addEnv "PS1='╰─>Portable Sandbox·${appID}·🧐⤔ '"
+	echo "source ~/portable-generated.env" >"${XDG_DATA_HOME}"/${stateDirectory}/.bashrc
+}
+
+function getChildPid() {
+	cGroup=$(systemctl --user show "${unitName}" -p ControlGroup | cut -c '14-')
+	for childPid in $(pgrep --cgroup "${cGroup}"); do
+		pecho debug "Trying PID ${childPid}"
+		cmdlineArg=$(cat /proc/${childPid}/cmdline | tr '\000' ' ')
+		if [[ ${cmdlineArg} =~ '/usr/lib/portable/helper' ]]; then
+			if [[ $(echo "${cmdlineArg}" | cut -c '-14') =~ "bwrap" ]]; then
+				pecho debug "Detected bwrap"
+			else
+				pecho debug "Detected helper"
+				export childPid=${childPid}
+				return 0
+			fi
+		fi
+	done
+}
+
+function enterSandbox() {
+	if [ ! $(systemctl --user is-active ${unitName}.service) = active ]; then
+		pecho crit "Application not running"
+		exit 1
 	fi
+	pecho debug "Starting program in sandbox: $@"
+	getChildPid
+	if [ -z ${childPid} ]; then
+		pecho crit "Failed to determine child PID"
+		exit 1
+	fi
+	pecho debug "procps-ng returned child ${childPid}"
+	systemd-run -P \
+		-p Slice="portable-${friendlyName}.slice" \
+		-p BindsTo="${proxyName}.service" \
+		-u "${unitName}-subprocess-$(uuidgen)" \
+		-p EnvironmentFile="${XDG_DATA_HOME}/${stateDirectory}/portable-generated.env" \
+		-p Environment=XAUTHORITY="${HOME}/.XAuthority" \
+		-p DevicePolicy=strict \
+		-p NoNewPrivileges=yes \
+		-p KeyringMode=private \
+		--user \
+		-- nsenter \
+			--user \
+			--user-parent \
+			--preserve-credentials \
+			-t ${childPid} \
+		nsenter \
+			--mount \
+			--uts \
+			--ipc \
+			--user \
+			-t ${childPid} \
+			--preserve-credentials \
+			$@
+	return $?
 }
 
 function execApp() {
-	if [ ! -S "${busDir}/bus" ]; then
-		pecho warn "Waiting for D-Bus proxy..."
-		counter=0
-		while [ ! -S "${busDir}/bus" ]; do
-			counter=$(expr ${counter} + 1)
-			sleep 0.1s
-		done
-		pecho info "D-Bus proxy took $(expr ${counter} / 10)s to launch"
-	fi
 	waylandDisplay
-	deviceBinding
 	importEnv
+	deviceBinding
 	mkdir -p "${XDG_DATA_HOME}"/"${stateDirectory}"/.config
-	pecho debug "GTK_IM_MODULE is ${GTK_IM_MODULE}"
-	pecho debug "QT_IM_MODULE is ${QT_IM_MODULE}"
 	if [ ! ${bwBindPar} ]; then
 		bwBindPar="/$(uuidgen)"
 	else
 		pecho warn "bwBindPar is ${bwBindPar}"
 	fi
+	rm "${XDG_DATA_HOME}/${stateDirectory}/startSignal" 2>/dev/null
+	passPid
 	systemd-run \
 	--user \
 	${sdOption} \
 	-u "${unitName}" \
+	-p BindsTo="${proxyName}.service" \
 	-p Description="Portable Sandbox for ${appID}" \
 	-p Documentation="https://github.com/Kraftland/portable" \
+	-p Slice="portable-${friendlyName}.slice" \
 	-p ExitType=cgroup \
 	-p OOMPolicy=stop \
 	-p KillMode=control-group \
@@ -215,16 +305,11 @@ function execApp() {
 	-p CPUAccounting=yes \
 	-p StartupCPUWeight=idle \
 	-p StartupIOWeight=1 \
-	-p MemoryMax=90% \
-	-p MemoryHigh=80% \
-	-p CPUWeight=20 \
-	-p IOWeight=20 \
+	-p MemoryHigh=90% \
 	-p ManagedOOMSwap=kill \
 	-p ManagedOOMMemoryPressure=kill \
 	-p IPAccounting=yes \
 	-p EnvironmentFile="${XDG_DATA_HOME}/${stateDirectory}/portable-generated.env" \
-	-p Environment=GTK_IM_MODULE="${GTK_IM_MODULE}" \
-	-p Environment=QT_IM_MODULE="${QT_IM_MODULE}" \
 	-p SystemCallFilter=~@clock \
 	-p SystemCallFilter=~@cpu-emulation \
 	-p SystemCallFilter=~@debug \
@@ -235,15 +320,10 @@ function execApp() {
 	-p SystemCallFilter=~@reboot \
 	-p SystemCallFilter=~@swap \
 	-p SystemCallErrorNumber=EPERM \
-	-p RestrictAddressFamilies=AF_UNIX \
-	-p RestrictAddressFamilies=AF_INET \
-	-p RestrictAddressFamilies=AF_INET6 \
-	-p RestrictAddressFamilies=~AF_PACKET \
 	-p PrivateIPC=yes \
 	-p ProtectClock=yes \
 	-p CapabilityBoundingSet= \
 	-p ProtectKernelModules=yes \
-	-p SystemCallArchitectures=native \
 	-p RestrictSUIDSGID=yes \
 	-p LockPersonality=yes \
 	-p RestrictRealtime=yes \
@@ -256,21 +336,13 @@ function execApp() {
 	-p DevicePolicy=strict \
 	-p NoNewPrivileges=yes \
 	-p ProtectControlGroups=yes \
-	-p PrivateTmp=yes \
 	-p PrivateMounts=yes \
 	-p KeyringMode=private \
-	-p UnsetEnvironment=XDG_CURRENT_DESKTOP \
 	-p TimeoutStopSec=20s \
 	-p BindReadOnlyPaths=/usr/bin/true:/usr/bin/lsblk \
-	-p BindReadOnlyPaths=-/run/systemd/resolve/stub-resolv.conf \
-	-p Environment=PATH=/sandbox:"${PATH}" \
 	-p Environment=XAUTHORITY="${HOME}/.XAuthority" \
-	-p Environment=DISPLAY="${DISPLAY}" \
-	-p Environment=QT_SCALE_FACTOR="${QT_SCALE_FACTOR}" \
-	-p Environment=QT_ENABLE_HIGHDPI_SCALING=1 \
-	-p Environment=QT_AUTO_SCREEN_SCALE_FACTOR=1 \
-	-p Environment=GTK_USE_PORTAL=1 \
-	-p Environment=GDK_DEBUG=portals \
+	-p Environment=instanceId="${instanceId}" \
+	-p Environment=busDir=${busDir} \
 	-- \
 	bwrap --new-session \
 		--unshare-cgroup-try \
@@ -278,11 +350,11 @@ function execApp() {
 		--unshare-uts \
 		--unshare-pid \
 		--unshare-user \
-		--disable-userns \
 		--ro-bind "${XDG_DATA_HOME}/${stateDirectory}"/flatpak-info \
 			/.flatpak-info \
-		--bind /tmp /tmp \
-		--ro-bind-try /tmp/.X11-unix /tmp/.X11-unix \
+		--tmpfs /tmp \
+  		--bind-try /tmp/.X11-unix /tmp/.X11-unix \
+    		--bind-try /tmp/.XIM-unix /tmp/.XIM-unix \
 		--dev /dev \
 		--dev-bind /dev/dri /dev/dri \
 		${bwInputArg} \
@@ -310,24 +382,39 @@ function execApp() {
 		--ro-bind /usr/lib/portable/mimeapps.list \
 			"${XDG_DATA_HOME}/${stateDirectory}/.config/mimeapps.list" \
 		--proc /proc \
-		--bind-try /dev/null /proc/meminfo \
+		--ro-bind-try /dev/null /proc/uptime \
+		--ro-bind-try /dev/null /proc/modules \
+		--ro-bind-try /dev/null /proc/cmdline \
+		--ro-bind-try /dev/null /proc/diskstats \
+		--ro-bind-try /dev/null /proc/devices \
+		--ro-bind-try /dev/null /proc/config.gz \
+		--ro-bind-try /dev/null /proc/version \
+		--tmpfs /proc/1 \
 		--bind-try /dev/null /proc/cpuinfo \
 		--bind /usr /usr \
+		--tmpfs /usr/share/applications \
 		--ro-bind /etc /etc \
-		--ro-bind-try /lib /lib \
-		--ro-bind-try /lib64 /lib64 \
+		--symlink /usr/lib /lib \
+		--symlink /usr/lib /lib64 \
 		--ro-bind-try /bin /bin \
 		--ro-bind-try /sbin /sbin \
 		--ro-bind-try /opt /opt \
-		--bind "${busDir}/bus" "${XDG_RUNTIME_DIR}/bus" \
+		--bind "${busDir}" "${XDG_RUNTIME_DIR}" \
+		--bind "${busDirAy}" "${XDG_RUNTIME_DIR}/at-spi" \
+		--dir /run/host \
 		--ro-bind "${XDG_DATA_HOME}/${stateDirectory}"/flatpak-info \
 			"${XDG_RUNTIME_DIR}/.flatpak-info" \
 		--ro-bind-try "${XDG_RUNTIME_DIR}/pulse" \
 			"${XDG_RUNTIME_DIR}/pulse" \
-		--ro-bind-try "${XDG_RUNTIME_DIR}/pipewire-0" \
-			"${XDG_RUNTIME_DIR}/pipewire-0" \
+		${pipewireBinding} \
 		--bind "${XDG_RUNTIME_DIR}/doc/by-app/${appID}" \
 			"${XDG_RUNTIME_DIR}"/doc \
+		--ro-bind /dev/null \
+			"${XDG_RUNTIME_DIR}"/.flatpak/"${instanceId}-private/run-environ" \
+		--ro-bind "${XDG_RUNTIME_DIR}/.flatpak/${instanceId}" \
+			"${XDG_RUNTIME_DIR}/.flatpak/${instanceId}" \
+		--ro-bind "${XDG_RUNTIME_DIR}/.flatpak/${instanceId}" \
+			"${XDG_RUNTIME_DIR}/flatpak-runtime-directory" \
 		--bind "${XDG_DATA_HOME}/${stateDirectory}" "${HOME}" \
 		--ro-bind-try "${XDG_DATA_HOME}"/icons \
 			"${XDG_DATA_HOME}"/icons \
@@ -356,48 +443,114 @@ function execApp() {
 		--setenv XDG_DOCUMENTS_DIR "$HOME/Documents" \
 		--setenv XDG_DATA_HOME "${XDG_DATA_HOME}" \
 		-- \
-			${launchTarget}
+			/usr/lib/portable/helper ${launchTarget}
+	stopApp
+}
 
+function execAppExist() {
+	export sdOption="-P"
+	export unitName="${unitName}-subprocess-$(uuidgen)"
+	execApp
+	status=$?
+	export unitName="$@"
+	return ${status}
+}
 
+function shareFile() {
+	if [[ ${trashAppUnsafe} = 1 ]]; then
+		zenity \
+			--error \
+			--title "Sandbox disabled" \
+			--text "Feature is intended for sandbox users"
+		pecho crit "Sandbox is disabled"
+		exit 1
+	fi
+	fileList=$(zenity --file-selection --multiple | tail -n 1)
+	IFS='|' read -r -a filePaths <<< "${fileList}"
+	for filePath in "${filePaths[@]}"; do
+		pecho info "User selected path: ${filePath}"
+		cp -a \
+			"${filePath}" \
+			"${XDG_DATA_HOME}/${stateDirectory}/Shared"
+	done
+	exit 0
+}
+
+function addEnv() {
+	echo "$@" >>"${XDG_DATA_HOME}/${stateDirectory}/portable-generated.env"
 }
 
 function deviceBinding() {
-	pecho debug "Detecting GPU..."
-	bwSwitchableGraphicsArg=""
-	videoMod=$(lsmod)
-	if [ $(ls /dev/dri/renderD* -la | wc -l) = 1 ] && [[ ${videoMod} =~ nvidia ]]; then
-		pecho info "Using single NVIDIA GPU"
-		for _card in $(ls /dev/nvidia*); do
-			if [ -e ${_card} ]; then
-				bwSwitchableGraphicsArg="${bwSwitchableGraphicsArg} --dev-bind ${_card} ${_card}"
-			fi
-		done
-	elif [[ ${videoMod} =~ i915 ]] || [[ ${videoMod} =~ xe ]] || [[ ${videoMod} =~ amdgpu ]]; then
-		pecho debug "Not using NVIDIA GPU"
+	if [[ ${gameMode} = true ]]; then
 		bwSwitchableGraphicsArg=""
-	elif [[ ${videoMod} =~ nvidia ]]; then
-		pecho debug "Using NVIDIA GPU"
-		for _card in $(ls /dev/nvidia*); do
-			if [ -e ${_card} ]; then
-				bwSwitchableGraphicsArg="${bwSwitchableGraphicsArg} --dev-bind ${_card} ${_card}"
+		pecho debug "Binding all GPUs in Game Mode"
+		ls /dev/nvidia* 2>/dev/null 1>/dev/null
+		lsStatus=$?
+		if [ "${lsStatus}" = 0 ]; then
+			pecho debug "Binding NVIDIA GPUs"
+			for _card in $(ls /dev/nvidia*); do
+				if [ -e ${_card} ]; then
+					bwSwitchableGraphicsArg="${bwSwitchableGraphicsArg} --dev-bind ${_card} ${_card}"
+				fi
+			done
+			pecho debug "Specifying environment variables for dGPU utilization"
+			addEnv '__NV_PRIME_RENDER_OFFLOAD=1'
+			addEnv '__VK_LAYER_NV_optimus=NVIDIA_only'
+			addEnv '__GLX_VENDOR_LIBRARY_NAME=nvidia'
+			addEnv 'VK_LOADER_DRIVERS_SELECT=nvidia_icd.json'
+		fi
+	else
+		pecho debug "Detecting GPU..."
+		bwSwitchableGraphicsArg=""
+		videoMod=$(lsmod)
+		if [ $(ls /dev/dri/renderD* -la | wc -l) = 1 ] && [[ ${videoMod} =~ nvidia ]]; then
+			pecho info "Using single NVIDIA GPU"
+			for _card in $(ls /dev/nvidia*); do
+				if [ -e ${_card} ]; then
+					bwSwitchableGraphicsArg="${bwSwitchableGraphicsArg} --dev-bind ${_card} ${_card}"
+				fi
+			done
+		elif [[ ${videoMod} =~ i915 ]] || [[ ${videoMod} =~ xe ]] || [[ ${videoMod} =~ amdgpu ]]; then
+			pecho debug "Not using NVIDIA GPU"
+			bwSwitchableGraphicsArg=""
+		elif [[ ${videoMod} =~ nvidia ]]; then
+			pecho debug "Using NVIDIA GPU"
+			for _card in $(ls /dev/nvidia*); do
+				if [ -e ${_card} ]; then
+					bwSwitchableGraphicsArg="${bwSwitchableGraphicsArg} --dev-bind ${_card} ${_card}"
+				fi
+			done
+		fi
+	fi
+	pecho debug "Generated GPU bind parameter: ${bwSwitchableGraphicsArg}"
+	bwCamPar=""
+	if [[ ${bindCameras} = "true" ]]; then
+		pecho debug "Detecting Camera..."
+		for camera in $(ls /dev/video*); do
+			if [ -e ${camera} ]; then
+				bwCamPar="${bwCamPar} --dev-bind ${camera} ${camera}"
 			fi
 		done
-		pecho debug "Generated GPU bind parameter: ${bwSwitchableGraphicsArg}"
 	fi
-	bwCamPar=""
-	pecho debug "Detecting Camera..."
-	for camera in $(ls /dev/video*); do
-		if [ -e ${camera} ]; then
-			bwCamPar="${bwCamPar} --dev-bind ${camera} ${camera}"
-		fi
-	done
 	pecho debug "Generated Camera bind parameter: ${bwCamPar}"
-	if [[ ${bindInputDevices} = true ]]; then
-		bwInputArg="--dev-bind-try /dev/input /dev/input"
-		pecho warn "Detected input preference as expose"
+	if [[ ${bindInputDevices} = "true" ]]; then
+		bwInputArg="--dev-bind-try /dev/input /dev/input --dev-bind-try /dev/uinput /dev/uinput"
+		ls /dev/hidraw* 2>/dev/null 1>/dev/null
+		lsStatus=$?
+		if [ "${lsStatus}" = 0 ]; then
+			for _device in $(ls /dev/hidraw*); do
+				if [ -e ${_card} ]; then
+					bwInputArg="${bwInputArg} --dev-bind ${_device} ${_device}"
+				fi
+			done
+		fi
+		pecho warn "Detected input preference as expose, setting arg: ${bwInputArg}"
 	else
 		bwInputArg=""
 		pecho debug "Not exposing input devices"
+	fi
+	if [[ ${bindPipewire} = "true" ]]; then
+		pipewireBinding="--ro-bind-try ${XDG_RUNTIME_DIR}/pipewire-0 ${XDG_RUNTIME_DIR}/pipewire-0"
 	fi
 }
 
@@ -423,13 +576,18 @@ function warnMulRunning() {
 	if [[ $? = 0 ]]; then
 		exit 0
 	fi
+	source "${_portableConfig}"
+	execAppExist "${unitName}"
+	if [[ $? = 0 ]]; then
+		exit 0
+	fi
 	if [[ "${LANG}" =~ 'zh_CN' ]]; then
 		zenity --title "程序未响应" --icon=utilities-system-monitor-symbolic --default-cancel --question --text="是否结束正在运行的进程?"
 	else
 		zenity --title "Application is not responding" --icon=utilities-system-monitor-symbolic --default-cancel --question --text="Do you wish to terminate the running session?"
 	fi
 	if [ $? = 0 ]; then
-		systemctl --user stop $@
+		stopApp
 	else
 		pecho crit "User denied session termination"
 		exit $?
@@ -441,12 +599,21 @@ function generateFlatpakInfo() {
 	install /usr/lib/portable/flatpak-info \
 		"${XDG_DATA_HOME}/${stateDirectory}"/flatpak-info
 	pecho debug "Generating flatpak-info..."
+	export instanceId=$(head -c 4 /dev/urandom | xxd -p | tr -d '\n' | awk '{print strtonum("0x"$1)}')
 	sed -i "s|placeHolderAppName|${appID}|g" \
 		"${XDG_DATA_HOME}/${stateDirectory}"/flatpak-info
-	sed -i "s|placeholderInstanceId|$(head -c 4 /dev/urandom | xxd -p | tr -d '\n' | awk '{print strtonum("0x"$1)}')|g" \
+	sed -i "s|placeholderInstanceId|${instanceId}|g" \
 		"${XDG_DATA_HOME}/${stateDirectory}"/flatpak-info
 	sed -i "s|placeholderPath|${XDG_DATA_HOME}/${stateDirectory}|g" \
 		"${XDG_DATA_HOME}/${stateDirectory}"/flatpak-info
+
+	mkdir -p "${XDG_RUNTIME_DIR}/.flatpak/${instanceId}"
+	install /usr/lib/portable/bwrapinfo.json \
+		"${XDG_RUNTIME_DIR}/.flatpak/${instanceId}/bwrapinfo.json"
+	install "${XDG_DATA_HOME}/${stateDirectory}"/flatpak-info \
+		"${XDG_RUNTIME_DIR}/.flatpak/${instanceId}/info"
+	pecho debug "Successfully installed bwrapinfo @${XDG_RUNTIME_DIR}/.flatpak/${instanceId}/bwrapinfo.json"
+
 }
 
 function dbusProxy() {
@@ -455,14 +622,12 @@ function dbusProxy() {
 		pecho warn "D-Bus proxy failed last time"
 		systemctl --user reset-failed ${proxyName}.service
 	fi
-	if [[ $(systemctl --user is-active ${proxyName}.service) = active ]]; then
-		pecho info "Existing D-Bus proxy detected! Terminating..."
-		systemctl --user kill ${proxyName}.service
-	fi
-	if [ -d "${busDir}" ]; then
-		rm "${busDir}" -r
+	if [[ $(systemctl --user is-failed ${proxyName}-a11y.service) = failed ]]; then
+		pecho warn "D-Bus a11y proxy failed last time"
+		systemctl --user reset-failed ${proxyName}-a11y.service
 	fi
 	mkdir "${busDir}" -p
+	mkdir -p "${busDirAy}" -p
 	pecho info "Starting D-Bus Proxy @ ${busDir}..."
 	if [[ ${PORTABLE_LOGGING} = "debug" ]]; then
 		proxyArg="--log"
@@ -470,7 +635,12 @@ function dbusProxy() {
 	mkdir -p "${XDG_RUNTIME_DIR}/doc/by-app/${appID}"
 	systemd-run \
 		--user \
+		-p Slice="portable-${friendlyName}.slice" \
 		-u ${proxyName} \
+		-p RestartMode=direct \
+		-p ExecStop="rm ${XDG_RUNTIME_DIR}/.flatpak/${instanceId} -r" \
+		-p ExecStop="rm -r ${busDir}" \
+		-p SuccessExitStatus=SIGKILL \
 		-- bwrap \
 			--symlink /usr/lib64 /lib64 \
 			--ro-bind /usr/lib /usr/lib \
@@ -488,12 +658,33 @@ function dbusProxy() {
 			${proxyArg} \
 			--filter \
 			--own=org.kde.StatusNotifierItem-2-1 \
+			--own=org.kde.StatusNotifierItem-3-1 \
+			--own=org.kde.StatusNotifierItem-4-1 \
+			--own=org.kde.StatusNotifierItem-5-1 \
+			--own=org.kde.StatusNotifierItem-6-1 \
 			--own=com.belmoussaoui.ashpd.demo \
+			--own=com.steampowered.* \
+			--own="${appID}" \
 			--talk=org.freedesktop.Notifications \
+			--talk=org.kde.StatusNotifierWatcher \
 			--call=org.freedesktop.Notifications.*=* \
+			--see=org.a11y.Bus \
+			--call=org.a11y.Bus=org.a11y.Bus.GetAddress@/org/a11y/bus \
+			--call=org.a11y.Bus=org.freedesktop.DBus.Properties.Get@/org/a11y/bus \
+			--see=org.freedesktop.portal.Flatpak \
+			--see=org.freedesktop.portal.Request \
+			--call=org.freedesktop.portal.Flatpak=org.freedesktop.DBus.Peer.Ping \
+			--call=org.freedesktop.portal.Desktop=org.freedesktop.DBus.Properties.GetAll \
+			--call=org.freedesktop.portal.Flatpak=*@/org/freedesktop/portal/Flatpak \
 			--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Settings.ReadAll \
+			--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Email.ComposeEmail \
+			--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.ScreenCast \
+			--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.ScreenCast.* \
+			--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Account.GetUserInformation \
 			--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Camera.* \
 			--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Camera \
+			--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.RemoteDesktop.* \
+			--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.RemoteDesktop \
 			--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Settings.Read \
 			--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Request \
 			--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Documents.* \
@@ -516,12 +707,8 @@ function dbusProxy() {
 			--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Secret \
 			--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Secret.RetrieveSecret \
 			--call=org.freedesktop.portal.Desktop=org.freedesktop.DBus.Properties.Get@/org/freedesktop/portal/desktop \
-			--talk=org.freedesktop.portal.Camera \
-			--talk=org.freedesktop.portal.Camera.* \
 			--talk=org.freedesktop.portal.Documents \
 			--call=org.freedesktop.portal.Documents=* \
-			--talk=org.freedesktop.portal.FileChooser \
-			--call=org.freedesktop.portal.FileChooser=* \
 			--talk=org.freedesktop.portal.FileTransfer \
 			--call=org.freedesktop.portal.FileTransfer=* \
 			--talk=org.freedesktop.portal.FileTransfer.* \
@@ -532,8 +719,6 @@ function dbusProxy() {
 			--call=org.freedesktop.portal.Print=* \
 			--talk=org.freedesktop.FileManager1 \
 			--call=org.freedesktop.FileManager1=* \
-			--talk=org.kde.StatusNotifierWatcher \
-			--call=org.kde.StatusNotifierWatcher=* \
 			--talk=org.freedesktop.portal.OpenURI \
 			--call=org.freedesktop.portal.OpenURI=* \
 			--talk=org.freedesktop.portal.OpenURI.OpenURI \
@@ -551,6 +736,43 @@ function dbusProxy() {
 			--call=org.freedesktop.portal.Request=* \
 			--own="${busName}" \
 			--broadcast=org.freedesktop.portal.*=@/org/freedesktop/portal/*
+	if [ ! -S ${XDG_RUNTIME_DIR}/at-spi/bus ]; then
+		pecho warn "No at-spi bus detected!"
+		touch "${busDirAy}/bus"
+		return 0
+	fi
+	systemd-run \
+		--user \
+		-p Slice="portable-${friendlyName}.slice" \
+		-u ${proxyName}-a11y \
+		-p RestartMode=direct \
+		-p BindsTo="${proxyName}.service" \
+		-p ExecStop="rm -r ${busDirAy}" \
+		-- bwrap \
+			--symlink /usr/lib64 /lib64 \
+			--ro-bind /usr/lib /usr/lib \
+			--ro-bind /usr/lib64 /usr/lib64 \
+			--ro-bind /usr/bin /usr/bin \
+			--ro-bind-try /usr/share /usr/share \
+			--bind "${XDG_RUNTIME_DIR}" "${XDG_RUNTIME_DIR}" \
+			--ro-bind "${XDG_DATA_HOME}/${stateDirectory}"/flatpak-info \
+				"${XDG_RUNTIME_DIR}/.flatpak-info" \
+			--ro-bind "${XDG_DATA_HOME}/${stateDirectory}"/flatpak-info \
+				/.flatpak-info \
+			-- /usr/bin/xdg-dbus-proxy \
+			unix:path="${XDG_RUNTIME_DIR}/at-spi/bus" \
+			"${busDirAy}/bus" \
+			--filter \
+			--sloppy-names \
+			--call=org.a11y.atspi.Registry=org.a11y.atspi.Socket.Embed@/org/a11y/atspi/accessible/root \
+			--call=org.a11y.atspi.Registry=org.a11y.atspi.Socket.Unembed@/org/a11y/atspi/accessible/root \
+			--call=org.a11y.atspi.Registry=org.a11y.atspi.Registry.GetRegisteredEvents@/org/a11y/atspi/registry \
+			--call=org.a11y.atspi.Registry=org.a11y.atspi.DeviceEventController.GetKeystrokeListeners@/org/a11y/atspi/registry/deviceeventcontroller \
+			--call=org.a11y.atspi.Registry=org.a11y.atspi.DeviceEventController.GetDeviceEventListeners@/org/a11y/atspi/registry/deviceeventcontroller \
+			--call=org.a11y.atspi.Registry=org.a11y.atspi.DeviceEventController.NotifyListenersSync@/org/a11y/atspi/registry/deviceeventcontroller \
+			--call=org.a11y.atspi.Registry=org.a11y.atspi.DeviceEventController.NotifyListenersAsync@/org/a11y/atspi/registry/deviceeventcontroller
+
+
 }
 
 function execAppUnsafe() {
@@ -559,11 +781,9 @@ function execAppUnsafe() {
 	pecho info "GTK_IM_MODULE is ${GTK_IM_MODULE}"
 	pecho info "QT_IM_MODULE is ${QT_IM_MODULE}"
 	systemd-run --user \
-		-p Environment=GTK_IM_MODULE="${GTK_IM_MODULE}" \
-		-p Environment=QT_IM_MODULE="${QT_IM_MODULE}" \
+		-p Slice="portable-${friendlyName}.slice" \
                 -p Environment=QT_AUTO_SCREEN_SCALE_FACTOR="${QT_AUTO_SCREEN_SCALE_FACTOR}" \
                 -p Environment=QT_ENABLE_HIGHDPI_SCALING="${QT_ENABLE_HIGHDPI_SCALING}" \
-                -p Environment=QT_SCALE_FACTOR="${QT_SCALE_FACTOR}" \
                 -p EnvironmentFile="${XDG_DATA_HOME}/${stateDirectory}/portable-generated.env" \
 		-u ${unitName} \
 		--tty \
@@ -573,9 +793,18 @@ function execAppUnsafe() {
 function questionFirstLaunch() {
 	if [ ! -f "${XDG_DATA_HOME}"/${stateDirectory}/options/sandbox ]; then
 		if [[ "${LANG}" =~ 'zh_CN' ]]; then
-			zenity --title "初次启动" --icon=security-medium-symbolic --question --text="允许程序读取 / 修改所有个人数据?"
+			/usr/bin/zenity \
+				--default-cancel \
+				--title "初次启动" \
+				--icon=security-medium-symbolic \
+				--question \
+				--text="允许程序读取 / 修改所有个人数据?"
 		else
-			zenity --title "Welcome" --icon=security-medium-symbolic --question --text="Do you wish this Application to access and modify all of your data?"
+			/usr/bin/zenity --default-cancel \
+				--title "Welcome" \
+				--icon=security-medium-symbolic \
+				--question \
+				--text="Do you wish this Application to access and modify all of your data?"
 		fi
 		if [[ $? = 0 ]]; then
 			export trashAppUnsafe=1
@@ -598,23 +827,7 @@ function questionFirstLaunch() {
 	fi
 }
 
-function disableSandbox() {
-	if [[ $@ =~ "f5aaebc6-0014-4d30-beba-72bce57e0650" ]] && [[ $@ =~ "--actions" ]]; then
-		rm "${XDG_DATA_HOME}"/${stateDirectory}/options/sandbox
-		questionFirstLaunch
-	fi
-}
-
-function openDataDir() {
-	if [[ $@ =~ "--actions" ]] && [[ $@ =~ "opendir" ]]; then
-		/usr/lib/flatpak-xdg-utils/xdg-open "${XDG_DATA_HOME}"/${stateDirectory}
-		exit $?
-	fi
-}
-
 function launch() {
-	genXAuth
-	inputMethod
 	if [[ $(systemctl --user is-failed ${unitName}.service) = failed ]]; then
 		pecho warn "${appID} failed last time"
 		systemctl --user reset-failed ${unitName}.service
@@ -625,53 +838,69 @@ function launch() {
 	if [[ $@ =~ "--actions" ]] && [[ $@ =~ "debug-shell" ]]; then
 		launchTarget="/usr/bin/bash"
 	fi
-	if [[ $@ =~ "--actions" ]] && [[ $@ =~ "connect-tty" ]]; then
-		sdOption="-t"
-	elif [[ $@ =~ "--actions" ]] && [[ $@ =~ "pipe-tty" ]]; then
-		sdOption="-P"
-	else
-		sdOption=""
-	fi
+	export sdOption="-P"
 	if [[ ${trashAppUnsafe} = 1 ]]; then
 		pecho warn "Launching ${appID} (unsafe)..."
 		execAppUnsafe
 	else
 		dbusProxy
 		pecho info "Launching ${appID}..."
-		passPid &
 		execApp
 	fi
 }
 
 function passPid() {
-	sleep 0.5s
-	if [[ $(systemctl --user is-active "${unitName}.service") =~ 'inactive' ]]; then
-		pecho warn "Waiting for Application start..."
-		counter=5
-		while [[ $(systemctl --user is-active "${unitName}.service") =~ 'inactive' ]]; do
-			counter=$(expr ${counter} + 1)
-			sleep 0.1s
-		done
-		pecho info "Application service took $(expr ${counter} / 10)s to launch"
-	fi
-	mainPid=$(systemctl --user show -p MainPID "${unitName}.service" | cut -c "9-")
-	pecho info "Main PID identified as ${mainPid}"
-	echo "${mainPid}" >"${XDG_DATA_HOME}/${stateDirectory}/mainPid"
+	#getChildPid
+	local childPid=$(systemctl --user show "${friendlyName}-dbus" -p MainPID | cut -c '9-')
+	echo "${childPid}" >"${XDG_DATA_HOME}/${stateDirectory}/mainPid"
+	echo "${childPid}" >"${XDG_RUNTIME_DIR}/.flatpak/${instanceId}/pid"
+	sed -i \
+		"s|placeholderChildPid|${childPid}|g" \
+		"${XDG_RUNTIME_DIR}/.flatpak/${instanceId}/bwrapinfo.json"
+
+	sed -i \
+		"s|placeholderMntId|$(readlink /proc/${childPid}/ns/mnt | sed 's/[^0-9]//g')|g" \
+		"${XDG_RUNTIME_DIR}/.flatpak/${instanceId}/bwrapinfo.json"
+	sed -i \
+		"s|placeholderPidId|$(readlink /proc/${childPid}/ns/pid | sed 's/[^0-9]//g')|g" \
+		"${XDG_RUNTIME_DIR}/.flatpak/${instanceId}/bwrapinfo.json"
+	#echo 2 >"${XDG_DATA_HOME}/${stateDirectory}/startSignal"
 }
 
 function stopApp() {
-	systemctl --user stop ${proxyName} ${unitName}
+	systemctl --user stop "${friendlyName}-dbus"
+	systemctl --user stop "${friendlyName}-dbus-a11y"
+	systemctl --user stop "portable-${friendlyName}.slice"
+}
+
+function cmdlineDispatcher() {
+	if [[ $@ =~ "f5aaebc6-0014-4d30-beba-72bce57e0650" ]] && [[ $@ =~ "--actions" ]]; then
+		rm -f \
+			"${XDG_DATA_HOME}"/${stateDirectory}/options/sandbox
+		rm -r "${XDG_DATA_HOME}"/flatpak/db
+		questionFirstLaunch
+	fi
+	if [[ $@ =~ "--actions" ]] && [[ $@ =~ "opendir" ]]; then
+		/usr/lib/flatpak-xdg-utils/xdg-open "${XDG_DATA_HOME}"/${stateDirectory}
+		exit $?
+	fi
+	if [[ $@ =~ "--actions" ]] && [[ $@ =~ "inspect" ]]; then
+		enterSandbox /usr/bin/bash
+		exit $?
+	fi
+	if [[ $@ =~ "--actions" ]] && [[ $@ =~ "share-files" ]]; then
+		shareFile
+	fi
 }
 
 if [[ $@ = "--actions quit" ]]; then
-	stopApp $@
+	stopApp "portable-${friendlyName}.slice"
 	exit $?
 fi
 
 sourceXDG
-disableSandbox $@
 questionFirstLaunch
-openDataDir $@
 manageDirs
+cmdlineDispatcher $@
 launch $@
 

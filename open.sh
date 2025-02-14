@@ -7,51 +7,50 @@ if [[ "$@" =~ "https://" ]] || [[ "$@" =~ "http://" ]]; then
 fi
 
 if [[ $1 =~ "/" ]]; then
-	origReq="$1"
+	export origReq="$1"
 fi
 
 if [[ $2 =~ "/" ]]; then
-	origReq="$2"
+	export origReq="$2"
 fi
 
 if [ ${trashAppUnsafe} ]; then
-	link="$2"
-	xdg-open "$2"
+	link="${origReq}"
+	xdg-open "${origReq}"
 	exit $?
-else
-	if [[ "$(echo $origReq | cut -c '1-8' )" =~ 'file://' ]]; then
-		if [[ "$origReq" =~ 'file:///tmp' ]]; then
-			echo "file:// link and /tmp path detected!"
-			export link="/proc/$(cat ~/mainPid)/root/$(echo $origReq | sed 's|file:///||g')"
-		else
-		#if [[ $(echo "$origReq" | cut -c '-4') = '/tmp' ]]
-			fakeDirBase="${HOME}"
-			realDirBase="${XDG_DATA_HOME}/${stateDirectory}"
-			export link=$(echo "$origReq" | sed "s|${fakeDirBase}|${realDirBase}|g" | sed 's|file://||g')
-		fi
-		echo "[Info] received a file open request: $origReq, translated to ${link}"
-	else
-		if [[ $(echo "${origReq}" | cut -c '-4') = '/tmp' ]]; then
-			echo "/tmp path detected!"
-			export link="/proc/$(cat ~/mainPid)/root${origReq}"
-		else
-			fakeDirBase="${HOME}"
-			realDirBase="${XDG_DATA_HOME}/${stateDirectory}"
-			link=$(echo "$origReq" | sed "s|${fakeDirBase}|${realDirBase}|g")
-		fi
-	fi
 fi
 
+if [[ $(echo ${origReq} | cut -c '1-8') =~ 'file://'  ]]; then
+	echo "Received a request with file://: ${origReq}"
+	export origReq="$(echo ${origReq} | sed 's|file:///|/|g')"
+	echo "Decoding path as: ${origReq}"
+else
+	export origReq="$(realpath ${origReq})"
+fi
 
+if [ ! -z ${bwBindPar} ]; then
+	export bwBindPar="$(realpath ${bwBindPar})"
+	echo "bwBindPar set to ${bwBindPar}"
+fi
+
+if [[ "${origReq}" =~ "${bwBindPar}" ]] && [ ! -z ${bwBindPar} ]; then
+	echo "[Warn] Request is in bwBindPar!"
+	export link="/proc/$(cat ~/mainPid)/root${origReq}"
+else
+	ln \
+		-sfr \
+		${origReq} ~/Shared
+	link="${XDG_DATA_HOME}/${stateDirectory}/Shared/$(basename ${origReq})"
+fi
 
 echo "[Info] received a request: $@, translated to ${link}"
 
-if [[ ${portableUsePortal} = 1 ]]; then
-	/usr/lib/flatpak-xdg-utils/xdg-open $(dirname "${link}")
-	if [[ $? = 0 ]]; then
-		exit 0
-	fi
-fi
+# if [[ ${portableUsePortal} = 1 ]]; then
+# 	/usr/lib/flatpak-xdg-utils/xdg-open $(dirname "${link}")
+# 	if [[ $? = 0 ]]; then
+# 		exit 0
+# 	fi
+# fi
 echo "[Info] Initiating D-Bus call..."
 dbus-send --print-reply --dest=org.freedesktop.FileManager1 \
 	/org/freedesktop/FileManager1 \
