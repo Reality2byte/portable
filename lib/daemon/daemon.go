@@ -1147,6 +1147,7 @@ func calcDbusArg(argChan chan []string) {
 		// TODO: control the KDE job system with a knob!
 		"--call=org.kde.JobViewServer=org.kde.JobViewServerV2.requestView@/JobViewServer", // This is for adding jobs to KDE
 		"--call=org.kde.JobViewServer=org.kde.JobViewV3.update@/org/kde/notificationmanager/jobs/*",
+		"--call=org.kde.JobViewServer=org.kde.JobViewV3.terminate@/org/kde/notificationmanager/jobs/*",
 	)
 
 	pecho("debug", "Expanding built-in rules")
