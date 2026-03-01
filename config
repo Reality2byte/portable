@@ -71,6 +71,9 @@ allowGlobalShortcuts="false"
 # Wake the application using D-Bus calls towards StatusNotifiers. Deprecated.
 dbusWake="false"
 
+# Allow contacting certain endpoints of KDE's JobServer to provide Job status such as downloading, defaults to true
+allowKDEStatus="true"
+
 # Mount the flatpak-info. DO NOT disable unless you know what you are doing!
 mountInfo="true"
 

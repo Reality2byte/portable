@@ -78,6 +78,7 @@ type portableConfigOpts struct {
 	bindInputDevices	bool
 	allowInhibit		bool
 	allowGlobalShortcuts	bool
+	allowKDEStatus		bool
 	dbusWake		bool
 	mountInfo		bool
 }
@@ -108,6 +109,7 @@ var targets = map[string]confTarget{
 	"bindInputDevices":	{b: &confOpts.bindInputDevices},
 	"allowInhibit":		{b: &confOpts.allowInhibit},
 	"allowGlobalShortcuts":	{b: &confOpts.allowGlobalShortcuts},
+	"allowKDEStatus":	{b: &confOpts.allowKDEStatus},
 	"dbusWake":		{b: &confOpts.dbusWake},
 	"mountInfo":		{b: &confOpts.mountInfo},
 }
@@ -132,6 +134,7 @@ var confInfo = map[string]string{
 	"bindInputDevices":	"bool",
 	"allowInhibit":		"bool",
 	"allowGlobalShortcuts":	"bool",
+	"allowKDEStatus":	"bool",
 	"dbusWake":		"bool",
 	"mountInfo":		"bool",
 }
@@ -602,6 +605,7 @@ func readConf() {
 	confOpts.allowClassicNotifs = true
 	confOpts.qt5Compat = true
 	confOpts.mountInfo = true
+	confOpts.allowKDEStatus = true
 
 	if len(os.Getenv("launchTarget")) > 0 {
 		confOpts.launchTarget = os.Getenv("launchTarget")
@@ -1143,7 +1147,18 @@ func calcDbusArg(argChan chan []string) {
 		"--call=org.freedesktop.portal.Desktop=org.freedesktop.DBus.Properties.Get@/org/freedesktop/portal/desktop",
 		"--call=org.freedesktop.portal.Request=*",
 		"--broadcast=org.freedesktop.portal.*=@/org/freedesktop/portal/*",
+
+		// TODO: control the KDE job system with a knob!
+
 	)
+
+	if confOpts.allowKDEStatus {
+		argList = append(argList,
+			"--call=org.kde.JobViewServer=org.kde.JobViewServerV2.requestView@/JobViewServer", // This is for adding jobs to KDE
+			"--call=org.kde.JobViewServer=org.kde.JobViewV3.update@/org/kde/notificationmanager/jobs/*",
+			"--call=org.kde.JobViewServer=org.kde.JobViewV3.terminate@/org/kde/notificationmanager/jobs/*",
+		)
+	}
 
 	pecho("debug", "Expanding built-in rules")
 
