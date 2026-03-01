@@ -3008,13 +3008,10 @@ func auxStartNg() bool {
 	}
 
 	roundTripper := http2.Transport{
-		DialTLS:	func(network, addr string, cfg *tls.Config) (net.Conn, error) {
-					//return net.Dial("unix", socketPath)
-					return conn, nil
-		},
-		AllowHTTP:	true,
+		AllowHTTP:		true,
+		DisableCompression:	true,
 		DialTLSContext: func(ctx context.Context, network, addr string, cfg *tls.Config) (net.Conn, error) {
-				return conn, nil
+					return conn, nil
 		},
 	}
 	pecho("debug", "Requesting start")
