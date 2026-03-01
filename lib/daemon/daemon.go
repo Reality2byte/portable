@@ -30,7 +30,7 @@ import (
 )
 
 const (
-	version		float32	=	13.99
+	version		float32	=	14.0
 	controlFile	string	=	"instanceId=inIdHold\nappID=idHold\nbusDir=busHold\nfriendlyName=friendlyHold"
 )
 
