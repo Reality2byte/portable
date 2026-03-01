@@ -2993,7 +2993,7 @@ func auxStartNg() bool {
 		confOpts.appID,
 		"/portable-control/helper",
 	)
-	_, err := net.Dial("unix", socketPath)
+	conn, err := net.Dial("unix", socketPath)
 	if err != nil {
 		pecho("warn", "Could not do auxiliary start using HTTP IPC")
 		return false
@@ -3009,9 +3009,13 @@ func auxStartNg() bool {
 
 	roundTripper := http2.Transport{
 		DialTLS:	func(network, addr string, cfg *tls.Config) (net.Conn, error) {
-					return net.Dial("unix", socketPath)
+					//return net.Dial("unix", socketPath)
+					return conn, nil
 		},
 		AllowHTTP:	true,
+		DialTLSContext: func(ctx context.Context, network, addr string, cfg *tls.Config) (net.Conn, error) {
+				return conn, nil
+		},
 	}
 	pecho("debug", "Requesting start")
 	ipcClient := http.Client{
