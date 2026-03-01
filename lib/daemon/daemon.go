@@ -78,6 +78,7 @@ type portableConfigOpts struct {
 	bindInputDevices	bool
 	allowInhibit		bool
 	allowGlobalShortcuts	bool
+	allowKDEStatus		bool
 	dbusWake		bool
 	mountInfo		bool
 }
@@ -108,6 +109,7 @@ var targets = map[string]confTarget{
 	"bindInputDevices":	{b: &confOpts.bindInputDevices},
 	"allowInhibit":		{b: &confOpts.allowInhibit},
 	"allowGlobalShortcuts":	{b: &confOpts.allowGlobalShortcuts},
+	"allowKDEStatus":	{b: &confOpts.allowKDEStatus},
 	"dbusWake":		{b: &confOpts.dbusWake},
 	"mountInfo":		{b: &confOpts.mountInfo},
 }
@@ -132,6 +134,7 @@ var confInfo = map[string]string{
 	"bindInputDevices":	"bool",
 	"allowInhibit":		"bool",
 	"allowGlobalShortcuts":	"bool",
+	"allowKDEStatus":	"bool",
 	"dbusWake":		"bool",
 	"mountInfo":		"bool",
 }
@@ -602,6 +605,7 @@ func readConf() {
 	confOpts.allowClassicNotifs = true
 	confOpts.qt5Compat = true
 	confOpts.mountInfo = true
+	confOpts.allowKDEStatus = true
 
 	if len(os.Getenv("launchTarget")) > 0 {
 		confOpts.launchTarget = os.Getenv("launchTarget")
