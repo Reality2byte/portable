@@ -1457,7 +1457,7 @@ func genBwArg(
 		"-p", "ProtectClock=yes",
 		// Required for --proc to work
 		"-p", "ProtectKernelLogs=no",
-		"-p", "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
+		"-p", "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK",
 		"-p", "CapabilityBoundingSet=",
 		"-p", "RestrictSUIDSGID=yes",
 		"-p", "LockPersonality=yes",
