@@ -1,18 +1,20 @@
 package main
 
 import (
-	"path/filepath"
-	"os"
-	"os/exec"
-	"encoding/json"
-	"strings"
 	"bufio"
-	"github.com/KarpelesLab/reflink"
-	"strconv"
+	"encoding/json"
 	"fmt"
 	"io/fs"
-	godbus "github.com/godbus/dbus/v5"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
 	"sync"
+
+	"github.com/KarpelesLab/reflink"
+	godbus "github.com/godbus/dbus/v5"
 )
 
 func openHome (config Config) {
@@ -146,6 +148,10 @@ func cmdlineDispatcher(cmdChan chan int8, config Config, exposeChan chan map[str
 			return
 		}
 		for _, val := range runtimeOpt.applicationArgs {
+			if slices.Contains(config.Exec.Arguments, val) {
+				pecho("debug", "Skipping forwarding of configuration defined argument", val)
+				return
+			}
 			if ! filepath.IsAbs(val) {
 				pecho("warn", "Rejecting non-absolute forwarding option:", val)
 				continue
