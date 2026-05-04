@@ -150,7 +150,7 @@ func cmdlineDispatcher(cmdChan chan int8, config Config, exposeChan chan map[str
 		for _, val := range runtimeOpt.applicationArgs {
 			if slices.Contains(config.Exec.Arguments, val) {
 				pecho("debug", "Skipping forwarding of configuration defined argument", val)
-				return
+				continue
 			}
 			if ! filepath.IsAbs(val) {
 				pecho("warn", "Rejecting non-absolute forwarding option:", val)
